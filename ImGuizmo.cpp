@@ -756,6 +756,9 @@ namespace IMGUIZMO_NAMESPACE
       bool mbUsingBounds;
       matrix_t mBoundsMatrix;
 
+      // draw utils
+      vec_t mFrustumPlanes[6];
+
       // projection manipulator
       matrix_t mEditedProjection;
       matrix_t mEditedProjectionInverse;
@@ -3139,6 +3142,33 @@ namespace IMGUIZMO_NAMESPACE
 
       // restore view/projection because it was used to compute ray
       ComputeContext(svgView.m16, svgProjection.m16, gContext.mModelSource.m16, gContext.mMode);
+   }
+
+   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+   // draw utils
+
+   void DrawInit(const float* view, const float* projection)
+   {
+      matrix_t model;
+      model.SetToIdentity();
+      ComputeContext(view, projection, model, WORLD);
+      matrix_t viewProjection = gContext.mViewMat * gContext.mProjectionMat;
+      ComputeFrustumPlanes(gContext.mFrustumPlanes, viewProjection.m16);
+   }
+
+   void DrawLine(const float* pointA, const float* pointB, ImU32 col, float thickness)
+   {
+      vec_t ptA = *(vec_t*)pointA;
+      vec_t ptB = *(vec_t*)pointB;
+      ImDrawList* drawList = gContext.mDrawList;
+      bool visible = ClipLineSegment(ptA, ptB, gContext.mFrustumPlanes);
+      if (visible)
+      {
+         const ImVec2 screenPosA = worldToPos(ptA, gContext.mViewProjection);
+         const ImVec2 screenPosB = worldToPos(ptB, gContext.mViewProjection);
+
+         drawList->AddLine(screenPosA, screenPosB, col, thickness);
+      }
    }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

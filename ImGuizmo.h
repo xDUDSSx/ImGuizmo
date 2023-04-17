@@ -222,6 +222,13 @@ namespace IMGUIZMO_NAMESPACE
    // use this version if you did not call Manipulate before and you are just using ViewManipulate
    IMGUI_API void ViewManipulate(float* view, const float* projection, OPERATION operation, MODE mode, float* matrix, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor);
 
+   // Initialize context for drawing utilities, needs to be called prior to any DrawLine() calls.
+   IMGUI_API void DrawInit(const float* view, const float* projection);
+
+   // Draw line from point A to B in world space with clipping enabled.
+   // Points are represented with x,y,z floats.
+   IMGUI_API void DrawLine(const float* pointA, const float* pointB, ImU32 col = IM_COL32(0xFF, 0, 0, 0xFF), float thickness = 1.0f);
+
    IMGUI_API void SetID(int id);
 
    // return true if the cursor is over the operation's gizmo
