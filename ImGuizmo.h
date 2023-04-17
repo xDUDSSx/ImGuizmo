@@ -183,6 +183,7 @@ namespace IMGUIZMO_NAMESPACE
       SCALE_XU         = (1u << 11),
       SCALE_YU         = (1u << 12),
       SCALE_ZU         = (1u << 13),
+      PROJECTION       = (1u << 14),
 
       TRANSLATE = TRANSLATE_X | TRANSLATE_Y | TRANSLATE_Z,
       ROTATE = ROTATE_X | ROTATE_Y | ROTATE_Z | ROTATE_SCREEN,
@@ -203,6 +204,14 @@ namespace IMGUIZMO_NAMESPACE
    };
 
    IMGUI_API bool Manipulate(const float* view, const float* projection, OPERATION operation, MODE mode, float* matrix, float* deltaMatrix = NULL, const float* snap = NULL, const float* localBounds = NULL, const float* boundsSnap = NULL);
+
+   // Projection frustum manipulator. Expects OpenGL NDC space range (xyz: <-1, 1>).
+   // Does not directly edit the matrix, just changes the params array containing the definition of the projection.
+   // Correctly reconstructing the projection matrix afterwards is the user's responsibility.
+   // The expected params array: float[6] = { left, right, bottom, top, near, far }
+   // Param values are in view space units. The passed params array can all be zeros (but must be initialized!), in that case they serve as just a delta.
+   IMGUI_API bool ManipulateProjection(const float* view, const float* projection, const float* editedProjection, const float* editedView, float* paramsDelta);
+
    //
    // Please note that this cubeview is patented by Autodesk : https://patents.google.com/patent/US7782319B2/en
    // It seems to be a defensive patent in the US. I don't think it will bring troubles using it as
@@ -258,6 +267,8 @@ namespace IMGUIZMO_NAMESPACE
       float ScaleLineCircleSize;        // Size of circle at the end of lines for scale gizmo
       float HatchedAxisLineThickness;   // Thickness of hatched axis lines
       float CenterCircleSize;           // Size of circle at the center of the translate/scale gizmo
+
+      float ProjectionCircleRadius;     // Size of the projection manipulator handles
 
       ImVec4 Colors[COLOR::COUNT];
    };

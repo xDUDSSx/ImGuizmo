@@ -211,6 +211,7 @@ namespace IMGUIZMO_NAMESPACE
       vec_t& operator *= (float v) { x *= v;    y *= v;    z *= v;    w *= v;    return *this; }
 
       vec_t operator * (float f) const;
+      vec_t operator / (float f) const;
       vec_t operator - () const;
       vec_t operator - (const vec_t& v) const;
       vec_t operator + (const vec_t& v) const;
@@ -270,6 +271,7 @@ namespace IMGUIZMO_NAMESPACE
    vec_t makeVect(float _x, float _y, float _z = 0.f, float _w = 0.f) { vec_t res; res.x = _x; res.y = _y; res.z = _z; res.w = _w; return res; }
    vec_t makeVect(ImVec2 v) { vec_t res; res.x = v.x; res.y = v.y; res.z = 0.f; res.w = 0.f; return res; }
    vec_t vec_t::operator * (float f) const { return makeVect(x * f, y * f, z * f, w * f); }
+   vec_t vec_t::operator / (float f) const { return makeVect(x / f, y / f, z / f, w / f); }
    vec_t vec_t::operator - () const { return makeVect(-x, -y, -z, -w); }
    vec_t vec_t::operator - (const vec_t& v) const { return makeVect(x - v.x, y - v.y, z - v.z, w - v.w); }
    vec_t vec_t::operator + (const vec_t& v) const { return makeVect(x + v.x, y + v.y, z + v.z, w + v.w); }
@@ -613,7 +615,13 @@ namespace IMGUIZMO_NAMESPACE
       MT_SCALE_X,
       MT_SCALE_Y,
       MT_SCALE_Z,
-      MT_SCALE_XYZ
+      MT_SCALE_XYZ,
+      MT_PROJECTION_LEFT,
+      MT_PROJECTION_RIGHT,
+      MT_PROJECTION_BOTTOM,
+      MT_PROJECTION_TOP,
+      MT_PROJECTION_NEAR,
+      MT_PROJECTION_FAR,
    };
 
    static bool IsTranslateType(int type)
@@ -629,6 +637,11 @@ namespace IMGUIZMO_NAMESPACE
    static bool IsScaleType(int type)
    {
      return type >= MT_SCALE_X && type <= MT_SCALE_XYZ;
+   }
+
+   static bool IsProjectionType(int type)
+   {
+     return type >= MT_PROJECTION_LEFT && type <= MT_PROJECTION_FAR;
    }
 
    // Matches MT_MOVE_AB order
@@ -647,6 +660,8 @@ namespace IMGUIZMO_NAMESPACE
       ScaleLineCircleSize        = 6.0f;
       HatchedAxisLineThickness   = 6.0f;
       CenterCircleSize           = 6.0f;
+
+      ProjectionCircleRadius     = 5.0f;
 
       // initialize default colors
       Colors[DIRECTION_X]           = ImVec4(0.666f, 0.000f, 0.000f, 1.000f);
@@ -740,6 +755,14 @@ namespace IMGUIZMO_NAMESPACE
       int mBoundsAxis[2];
       bool mbUsingBounds;
       matrix_t mBoundsMatrix;
+
+      // projection manipulator
+      matrix_t mEditedProjection;
+      matrix_t mEditedProjectionInverse;
+      matrix_t mEditedView;
+      matrix_t mEditedViewInverse;
+      vec_t mProjectionHandlePositions[6];
+      vec_t mProjectionHandleAxes[6];
 
       //
       int mCurrentOperation;
@@ -915,6 +938,11 @@ namespace IMGUIZMO_NAMESPACE
    static float DistanceToPlane(const vec_t& point, const vec_t& plan)
    {
       return plan.Dot3(point) + plan.w;
+   }
+
+   static float DistanceToPlane(const vec_t& point, const vec_t& planeOrigin, const vec_t& planeNormal)
+   {
+      return planeNormal.Dot3((point - planeOrigin));
    }
 
    static void CalculateSphereHorizon(const vec_t position, const vec_t eye, const float sphereRadius, vec_t& screenPlanePos, vec_t& screenNormal, float& horizonOffset, float& horizonRadius)
@@ -2697,6 +2725,58 @@ namespace IMGUIZMO_NAMESPACE
       }
    }
 
+   // Points A and B in world space and can be modified.
+   // Requires precomputed frustum planes from ComputeFrustumPlanes().
+   // Returns whether the segment is visible.
+   static bool ClipLineSegment(vec_t& ptA, vec_t& ptB, const vec_t* frustumPlanes)
+   {
+      bool visible = true;
+      for (int i = 0; i < 6; i++)
+      {
+         float dA = DistanceToPlane(ptA, frustumPlanes[i]);
+         float dB = DistanceToPlane(ptB, frustumPlanes[i]);
+         if (dA < 0.f && dB < 0.f)
+         {
+            visible = false;
+            break;
+         }
+         if (dA > 0.f && dB > 0.f)
+         {
+            continue;
+         }
+         if (dA < 0.f)
+         {
+            float len = fabsf(dA - dB);
+            float t = fabsf(dA) / len;
+            ptA.Lerp(ptB, t);
+         }
+         if (dB < 0.f)
+         {
+            float len = fabsf(dB - dA);
+            float t = fabsf(dB) / len;
+            ptB.Lerp(ptA, t);
+         }
+      }
+      return visible;
+   }
+
+   // Point in world space
+   // Requires precomputed frustum planes from ComputeFrustumPlanes().
+   static bool ClipPoint(vec_t& pos, const vec_t* frustumPlanes)
+   {
+      bool visible = true;
+      for (int i = 0; i < 6; i++)
+      {
+         float dist = DistanceToPlane(pos, frustumPlanes[i]);
+         if (dist < 0.f)
+         {
+            visible = false;
+            break;
+         }
+      }
+      return visible;
+   }
+
    void DrawCubes(const float* view, const float* projection, const float* matrices, int matrixCount)
    {
       matrix_t viewInverse;
@@ -2761,17 +2841,7 @@ namespace IMGUIZMO_NAMESPACE
             centerPosition.TransformPoint(directionUnary[normalIndex] * 0.5f * invert, *(matrix_t*)matrix);
             centerPositionVP.TransformPoint(directionUnary[normalIndex] * 0.5f * invert, res);
 
-            bool inFrustum = true;
-            for (int iFrustum = 0; iFrustum < 6; iFrustum++)
-            {
-               float dist = DistanceToPlane(centerPosition, frustum[iFrustum]);
-               if (dist < 0.f)
-               {
-                  inFrustum = false;
-                  break;
-               }
-            }
-
+            bool inFrustum = ClipPoint(centerPosition, frustum);
             if (!inFrustum)
             {
                continue;
@@ -2824,33 +2894,7 @@ namespace IMGUIZMO_NAMESPACE
          {
             vec_t ptA = makeVect(dir ? -gridSize : f, 0.f, dir ? f : -gridSize);
             vec_t ptB = makeVect(dir ? gridSize : f, 0.f, dir ? f : gridSize);
-            bool visible = true;
-            for (int i = 0; i < 6; i++)
-            {
-               float dA = DistanceToPlane(ptA, frustum[i]);
-               float dB = DistanceToPlane(ptB, frustum[i]);
-               if (dA < 0.f && dB < 0.f)
-               {
-                  visible = false;
-                  break;
-               }
-               if (dA > 0.f && dB > 0.f)
-               {
-                  continue;
-               }
-               if (dA < 0.f)
-               {
-                  float len = fabsf(dA - dB);
-                  float t = fabsf(dA) / len;
-                  ptA.Lerp(ptB, t);
-               }
-               if (dB < 0.f)
-               {
-                  float len = fabsf(dB - dA);
-                  float t = fabsf(dB) / len;
-                  ptB.Lerp(ptA, t);
-               }
-            }
+            bool visible = ClipLineSegment(ptA, ptB, frustum);
             if (visible)
             {
                ImU32 col = IM_COL32(0x80, 0x80, 0x80, 0xFF);
@@ -3095,5 +3139,272 @@ namespace IMGUIZMO_NAMESPACE
 
       // restore view/projection because it was used to compute ray
       ComputeContext(svgView.m16, svgProjection.m16, gContext.mModelSource.m16, gContext.mMode);
+   }
+
+   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+   // projection manipulators
+
+   static const vec_t gProjHandlesNdc[6] = {
+       makeVect(-1.0f, 0.0f, -1.0f, 1.0f), // L
+       makeVect(+1.0f, 0.0f, -1.0f, 1.0f), // R
+       makeVect(0.0f, -1.0f, -1.0f, 1.0f), // B
+       makeVect(0.0f, +1.0f, -1.0f, 1.0f), // T
+       makeVect(0.0f, 0.0f, -1.0f, 1.0f), // N
+       makeVect(0.0f, 0.0f, +1.0f, 1.0f), // F
+   };
+
+   static const vec_t gProjCubeLinesNdc[16] = {
+       makeVect(-1.0f, -1.0f, -1.0f, 1.0f),
+       makeVect(1.0f, -1.0f, -1.0f, 1.0f),
+       makeVect(1.0f, 1.0f, -1.0f, 1.0f),
+       makeVect(-1.0f, 1.0f, -1.0f, 1.0f),
+       makeVect(-1.0f, -1.0f, -1.0f, 1.0f),
+       makeVect(-1.0f, -1.0f, 1.0f, 1.0f),
+       makeVect(1.0f, -1.0f, 1.0f, 1.0f),
+       makeVect(1.0f, 1.0f, 1.0f, 1.0f),
+       makeVect(-1.0f, 1.0f, 1.0f, 1.0f),
+       makeVect(-1.0f, -1.0f, 1.0f, 1.0f),
+       makeVect(-1.0f, 1.0f, -1.0f, 1.0f),
+       makeVect(-1.0f, 1.0f, 1.0f, 1.0f),
+       makeVect(1.0f, 1.0f, -1.0f, 1.0f),
+       makeVect(1.0f, 1.0f, 1.0f, 1.0f),
+       makeVect(1.0f, -1.0f, -1.0f, 1.0f),
+       makeVect(1.0f, -1.0f, 1.0f, 1.0f),
+   };
+
+   static vec_t ProjectionToWorld(const vec_t ndcPos, const matrix_t projInv, const matrix_t viewInv)
+   {
+      vec_t ndcPosCopy = ndcPos;
+      ndcPosCopy.TransformPoint(projInv * viewInv);
+      ndcPosCopy = ndcPosCopy / ndcPosCopy.w;
+      return ndcPosCopy;
+   }
+
+   static void CalcProjectionHandlePositions()
+   {
+      for (int i = 0; i < 6; i++)
+      {
+         vec_t handlePos = ProjectionToWorld(gProjHandlesNdc[i], gContext.mEditedProjectionInverse, gContext.mEditedViewInverse);
+         gContext.mProjectionHandlePositions[i] = handlePos;
+      }
+   }
+
+   static int GetProjectionType(OPERATION op)
+   {
+      if(!Intersects(op, PROJECTION) || gContext.mbUsing || !gContext.mbMouseOver)
+      {
+         return MT_NONE;
+      }
+
+      ImGuiIO& io = ImGui::GetIO();
+      int type = MT_NONE;
+
+      CalcProjectionHandlePositions();
+
+      const vec_t mouseScreenPos = makeVect(io.MousePos - ImVec2(gContext.mX, gContext.mY));
+
+      // Check handles
+      for (int i = 0; i < 6; i++)
+      {
+         ImVec2 handleScreenPos = worldToPos(gContext.mProjectionHandlePositions[i], gContext.mViewProjection);
+         vec_t handleScreenPosVect = makeVect(handleScreenPos - ImVec2(gContext.mX, gContext.mY));
+         if ((handleScreenPosVect - mouseScreenPos).Length() < 12.f)
+         {
+            type = MT_PROJECTION_LEFT + i;
+         }
+      }
+
+      return type;
+   }
+
+   static bool HandleProjection(float* params, OPERATION op, int& type)
+   {
+      if(!Intersects(op, PROJECTION) || type != MT_NONE)
+      {
+         return false;
+      }
+      const ImGuiIO& io = ImGui::GetIO();
+      bool modified = false;
+
+      if (gContext.mbUsing && (gContext.mActualID == -1 || gContext.mActualID == gContext.mEditingID) && IsProjectionType(gContext.mCurrentOperation))
+      {
+#if IMGUI_VERSION_NUM >= 18723
+         ImGui::SetNextFrameWantCaptureMouse(true);
+#else
+         ImGui::CaptureMouseFromApp();
+#endif
+         CalcProjectionHandlePositions();
+
+         const float signedLength = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, gContext.mTranslationPlan);
+         const float len = fabsf(signedLength); // near plan
+         const vec_t newPos = gContext.mRayOrigin + gContext.mRayVector * len;
+
+         // compute delta
+         vec_t delta = newPos - gContext.mProjectionHandlePositions[gContext.mCurrentOperation - MT_PROJECTION_LEFT];
+
+         const ImVec2 newPosScreen = worldToPos(newPos, gContext.mViewProjection);
+         gContext.mDrawList->AddCircleFilled(newPosScreen, 5.f, IM_COL32(0xFF, 0, 0, 0xFF));
+
+         const ImVec2 handlePosScreen = worldToPos(gContext.mProjectionHandlePositions[gContext.mCurrentOperation - MT_PROJECTION_LEFT], gContext.mViewProjection);
+         gContext.mDrawList->AddCircleFilled(handlePosScreen, 5.f, IM_COL32(0xFF, 0xFF, 0, 0xFF));
+
+         vec_t axis = gContext.mProjectionHandleAxes[gContext.mCurrentOperation - MT_PROJECTION_LEFT];
+         const float lengthOnAxis = Dot(axis, delta);
+         delta = axis * lengthOnAxis;
+
+         // TODO: (DUDSS) Snap
+
+         if (delta != gContext.mTranslationLastDelta)
+         {
+            modified = true;
+         }
+         gContext.mTranslationLastDelta = delta;
+
+         params[gContext.mCurrentOperation - MT_PROJECTION_LEFT] += lengthOnAxis;
+
+         if (!io.MouseDown[0])
+         {
+            gContext.mbUsing = false;
+         }
+         type = gContext.mCurrentOperation;
+      }
+      else
+      {
+         type = GetProjectionType(op);
+         if (type != MT_NONE)
+         {
+#if IMGUI_VERSION_NUM >= 18723
+            ImGui::SetNextFrameWantCaptureMouse(true);
+#else
+            ImGui::CaptureMouseFromApp();
+#endif
+         }
+         if (CanActivate() && type != MT_NONE)
+         {
+            gContext.mbUsing = true;
+            gContext.mEditingID = gContext.mActualID;
+            gContext.mCurrentOperation = type;
+
+            // TODO: (DUDSS) Transform these by the view matrix
+            vec_t movePlaneNormals[6] = {
+                makeVect(1, 0, 0),
+                makeVect(1, 0, 0),
+                makeVect(0, 1, 0),
+                makeVect(0, 1, 0),
+                makeVect(0, 0, -1),
+                makeVect(0, 0, -1),
+            };
+            for (int i = 0; i < 6; i++)
+            {
+               movePlaneNormals[i].TransformVector(gContext.mEditedViewInverse);
+            }
+
+            vec_t handlePosition = gContext.mProjectionHandlePositions[type - MT_PROJECTION_LEFT];
+            gContext.mProjectionHandleAxes[type - MT_PROJECTION_LEFT] = movePlaneNormals[type - MT_PROJECTION_LEFT];
+
+            // TODO: (DUDSS) Again, transform vector with view matrix
+            vec_t cameraToHandleNormalized = Normalized(handlePosition - gContext.mCameraEye);
+            for (unsigned int i = 0; i < 6; i++)
+            {
+               vec_t orthoVector = Cross(movePlaneNormals[i], cameraToHandleNormalized);
+               movePlaneNormals[i].Cross(orthoVector);
+               movePlaneNormals[i].Normalize();
+            }
+
+            gContext.mTranslationPlan = BuildPlan(handlePosition, movePlaneNormals[type - MT_PROJECTION_LEFT]);
+            const float len = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, gContext.mTranslationPlan);
+            gContext.mTranslationPlanOrigin = gContext.mRayOrigin + gContext.mRayVector * len;
+            gContext.mMatrixOrigin = handlePosition;
+
+            gContext.mRelativeOrigin = (gContext.mTranslationPlanOrigin - handlePosition);
+         }
+      }
+
+      return modified;
+   }
+
+   static void DrawProjectionGizmo(OPERATION op, int type)
+   {
+      ImDrawList* drawList = gContext.mDrawList;
+      if (!drawList)
+      {
+         return;
+      }
+
+      if (!Intersects(op, PROJECTION))
+      {
+         return;
+      }
+
+      // Prepare clipping
+      vec_t frustumPlanes[6];
+      ComputeFrustumPlanes(frustumPlanes, gContext.mViewProjection.m16);
+
+      // Draw frustum outline
+      for (int i = 1; i < 15; i++)
+      {
+         int aIdx;
+         int bIdx;
+         if (i < 10)
+         {
+            aIdx = i - 1;
+            bIdx = i;
+         }
+         else
+         {
+            aIdx = i;
+            bIdx = i + 1;
+            i++;
+         }
+         vec_t posA = ProjectionToWorld(gProjCubeLinesNdc[aIdx], gContext.mEditedProjectionInverse, gContext.mEditedViewInverse);
+         vec_t posB = ProjectionToWorld(gProjCubeLinesNdc[bIdx], gContext.mEditedProjectionInverse, gContext.mEditedViewInverse);
+
+         bool visible = ClipLineSegment(posA, posB, frustumPlanes);
+         if (visible)
+         {
+            const ImVec2 screenPosA = worldToPos(posA, gContext.mViewProjection);
+            const ImVec2 screenPosB = worldToPos(posB, gContext.mViewProjection);
+
+            drawList->AddLine(screenPosA, screenPosB, IM_COL32(0xFF, 0, 0, 0xFF));
+         }
+      }
+
+      // Draw handles
+      for (int i = 0; i < 6; i++)
+      {
+         vec_t handlePos = ProjectionToWorld(gProjHandlesNdc[i], gContext.mEditedProjectionInverse, gContext.mEditedViewInverse);
+         if (!ClipPoint(handlePos, frustumPlanes))
+         {
+            continue;
+         }
+         const ImVec2 handleScreenPos = worldToPos(handlePos, gContext.mViewProjection);
+
+         ImU32 selectionColor = GetColorU32(SELECTION);
+         bool overAnchor = type == (int)(MT_PROJECTION_LEFT + i);
+
+         static const float AnchorRadius = 8.f;
+         unsigned int anchorAlpha = gContext.mbEnable ? IM_COL32_BLACK : IM_COL32(0, 0, 0, 0x80);
+         int c = 200;
+         unsigned int anchorColor = overAnchor ? selectionColor : (IM_COL32((i >= 0 && i < 2 ? c : 0), (i >= 2 && i < 4 ? c : 0), (i >= 4 && i < 6 ? c : 0), 0) + anchorAlpha);
+         drawList->AddCircleFilled(handleScreenPos, AnchorRadius, IM_COL32_BLACK);
+         drawList->AddCircleFilled(handleScreenPos, AnchorRadius - 1.2f, anchorColor);
+      }
+   }
+
+   bool ManipulateProjection(const float* view, const float* projection, const float* editedProjection, const float* editedView, float* params)
+   {
+      gContext.mEditedProjection = *(matrix_t*)editedProjection;
+      gContext.mEditedProjectionInverse.Inverse(gContext.mEditedProjection);
+      gContext.mEditedView = *(matrix_t*)editedView;
+      gContext.mEditedViewInverse.Inverse(gContext.mEditedView);
+
+      ComputeContext(view, projection, gContext.mEditedProjection, LOCAL);
+
+      int type = MT_NONE;
+      bool manipulated = HandleProjection(params, PROJECTION, type);
+
+      DrawProjectionGizmo(PROJECTION, type);
+
+      return manipulated;
    }
 };
