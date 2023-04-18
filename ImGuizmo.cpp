@@ -131,6 +131,26 @@ namespace IMGUIZMO_NAMESPACE
       Frustum(-xmax, xmax, -ymax, ymax, znear, zfar, m16);
    }
 
+   void OrthoGraphic(const float l, float r, float b, const float t, float zn, const float zf, float* m16)
+   {
+      m16[0] = 2 / (r - l);
+      m16[1] = 0.0f;
+      m16[2] = 0.0f;
+      m16[3] = 0.0f;
+      m16[4] = 0.0f;
+      m16[5] = 2 / (t - b);
+      m16[6] = 0.0f;
+      m16[7] = 0.0f;
+      m16[8] = 0.0f;
+      m16[9] = 0.0f;
+      m16[10] = 1.0f / (zf - zn);
+      m16[11] = 0.0f;
+      m16[12] = (l + r) / (l - r);
+      m16[13] = (t + b) / (b - t);
+      m16[14] = zn / (zn - zf);
+      m16[15] = 1.0f;
+   }
+
    void Cross(const float* a, const float* b, float* r)
    {
       r[0] = a[1] * b[2] - a[2] * b[1];
@@ -3142,6 +3162,149 @@ namespace IMGUIZMO_NAMESPACE
 
       // restore view/projection because it was used to compute ray
       ComputeContext(svgView.m16, svgProjection.m16, gContext.mModelSource.m16, gContext.mMode);
+   }
+
+   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+   // view axes
+
+
+
+   void ViewAxes(float* view, const float* projection, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor)
+   {
+      ImDrawList* drawList = gContext.mDrawList;
+
+      matrix_t model;
+      model.SetToIdentity();
+      ComputeContext(view, projection, model, WORLD);
+
+      float axisSize = 0.7f;
+      float baseIntensity = 0.1f;
+      float intensity = 0.78f;
+      float thickness = 3.0f;
+
+      matrix_t svgView, svgProjection;
+      svgView = gContext.mViewMat;
+      svgProjection = gContext.mProjectionMat;
+
+      ImGuiIO& io = ImGui::GetIO();
+      gContext.mDrawList->AddCircleFilled(position + size * 0.5f, min(size.x, size.y) / 2.f, backgroundColor);
+      //gContext.mDrawList->AddRect(position, position + size, IM_COL32(0xFF, 0, 0, 0xFF));
+      matrix_t viewInverse;
+      viewInverse.Inverse(*(matrix_t*)view);
+
+      // view/projection matrices
+      matrix_t cubeProjection, cubeView;
+
+      const vec_t camTarget = viewInverse.v.position - viewInverse.v.dir * length;
+      const float distance = 3.f;
+
+      float viewWidth;
+      float viewHeight;
+      float aspectRatio = size.x / size.y;
+      if (aspectRatio > 1.0f) {
+         viewWidth = 1.f / axisSize;
+         viewHeight = viewWidth * 1.f/aspectRatio;
+         viewWidth *= aspectRatio;
+         viewHeight *= aspectRatio;
+      } else {
+         viewHeight = 1.f / axisSize;
+         viewWidth = viewHeight * aspectRatio;
+         viewWidth *= 1.f / aspectRatio;
+         viewHeight *= 1.f / aspectRatio;
+      }
+      OrthoGraphic(-viewWidth, viewWidth, -viewHeight, viewHeight, min(viewWidth, viewHeight), -min(viewWidth, viewHeight), cubeProjection.m16);
+
+      vec_t dir = makeVect(viewInverse.m[2][0], viewInverse.m[2][1], viewInverse.m[2][2]);
+      vec_t up = makeVect(viewInverse.m[1][0], viewInverse.m[1][1], viewInverse.m[1][2]);
+      vec_t eye = dir * distance;
+      vec_t zero = makeVect(0.f, 0.f);
+      LookAt(&eye.x, &zero.x, &up.x, cubeView.m16);
+
+      // set context
+      gContext.mViewMat = cubeView;
+      gContext.mProjectionMat = cubeProjection;
+      ComputeCameraRay(gContext.mRayOrigin, gContext.mRayVector, position, size);
+
+      const matrix_t res = cubeView * cubeProjection;
+
+      float const circleRadius = 0.55f * ImGui::GetFontSize();
+      float const smallerCircleRadius = circleRadius * 0.78f;
+      //ImColor textColor = IM_COL32(0xFF, 0xFF, 0xFF, 0xFF);
+      ImColor textColor = IM_COL32(10, 10, 10, 0xFF);
+
+      vec_t origin = makeVect(0, 0, 0);
+      ImVec2 originScreen = worldToPos(origin, res, position, size);
+      // drawList->AddCircleFilled(originScreen, 5.f, IM_COL32(0xFF, 0, 0, 0xFF));
+
+      constexpr int axisCount = 6;
+      static const char* axisLabels[axisCount] = {"X", "Y", "Z", "-X", "-Y", "-Z"};
+      static const vec_t axisVectors[axisCount] = {
+          makeVect(1, 0, 0), makeVect(0, 1, 0), makeVect(0, 0, 1),
+          makeVect(-1, 0, 0), makeVect(0, -1, 0), makeVect(0, 0, -1)
+      };
+      static const vec_t axisColors[axisCount / 2] = {
+          makeVect(0.969, 0.004, 0.141, 1.f), makeVect(0.529, 0.941, 0.055, 1.f), makeVect(0, 0.573, 1, 1.f)
+      };
+
+      struct Point
+      {
+         float z;
+         int i;
+      };
+      Point sortArray[axisCount] = {{0}, {0}};
+
+      ImVec2 axisEndsScreen[axisCount];
+      for (int i = 0; i < axisCount; i++)
+      {
+         vec_t axisEnd = origin + axisVectors[i];
+         vec_t axisEndView = axisEnd;
+         axisEndView.TransformPoint(cubeView);
+         sortArray[i].z = axisEndView.z;
+         sortArray[i].i = i;
+         axisEndsScreen[i] = worldToPos(axisEndView, cubeProjection, position, size);
+      }
+
+      // Sort by z
+      qsort(sortArray, axisCount, sizeof(Point), [](void const * _a, void const * _b)
+      {
+         Point* a = (Point*) _a;
+         Point* b = (Point*) _b;
+         if (a->z > b->z)
+         {
+            return 1;
+         }
+         return -1;
+      });
+
+      for (int j = 0; j < axisCount; j++)
+      {
+         int i = sortArray[j].i; // Reordering based on z
+
+         float valueFactor = (j >= 3 ? 1.0f : 0.74f);
+
+         vec_t color = axisColors[i % 3];
+         vec_t colorHSV;
+         ImGui::ColorConvertRGBtoHSV(color.x, color.y, color.z, colorHSV.x, colorHSV.y, colorHSV.z);
+         colorHSV.z *= 0.9f;
+         colorHSV.z *= valueFactor;
+         if (i >= 2) {
+            colorHSV.y *= 0.9f;
+         }
+         ImGui::ColorConvertHSVtoRGB(colorHSV.x, colorHSV.y, colorHSV.z, color.x, color.y, color.z);
+         ImColor imColor = ImColor(color.x, color.y, color.z, color.w);
+
+         if (i <= 2) {
+            drawList->AddLine(originScreen, axisEndsScreen[i], imColor, thickness);
+            drawList->AddCircleFilled(axisEndsScreen[i], circleRadius, imColor);
+            ImVec2 textSize = ImGui::CalcTextSize(axisLabels[i]);
+            ImVec2 textPos = axisEndsScreen[i] - textSize * 0.5f;
+            textPos.x += 0.5f;
+            drawList->AddText(textPos, textColor, axisLabels[i]);
+            //drawList->AddRect(axisEndsScreen[i] - textSize * 0.5f, axisEndsScreen[i] + textSize * 0.5f, IM_COL32_BLACK);
+         } else {
+            drawList->AddCircleFilled(axisEndsScreen[i], smallerCircleRadius, imColor);
+         }
+      }
    }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

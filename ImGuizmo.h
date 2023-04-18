@@ -222,6 +222,8 @@ namespace IMGUIZMO_NAMESPACE
    // use this version if you did not call Manipulate before and you are just using ViewManipulate
    IMGUI_API void ViewManipulate(float* view, const float* projection, OPERATION operation, MODE mode, float* matrix, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor);
 
+   IMGUI_API void ViewAxes(float* view, const float* projection, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor = IM_COL32(0, 0, 0, 0));
+
    // Initialize context for drawing utilities, needs to be called prior to any DrawLine() calls.
    IMGUI_API void DrawInit(const float* view, const float* projection);
 
