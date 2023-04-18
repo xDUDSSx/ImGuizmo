@@ -637,6 +637,8 @@ namespace IMGUIZMO_NAMESPACE
    Style::Style()
    {
       // default values
+      PerspectiveCorrectRotationGizmo = true;
+
       TranslationLineThickness   = 3.0f;
       TranslationLineArrowSize   = 6.0f;
       RotationLineThickness      = 2.0f;
@@ -913,6 +915,20 @@ namespace IMGUIZMO_NAMESPACE
    static float DistanceToPlane(const vec_t& point, const vec_t& plan)
    {
       return plan.Dot3(point) + plan.w;
+   }
+
+   static void CalculateSphereHorizon(const vec_t position, const vec_t eye, const float sphereRadius, vec_t& screenPlanePos, vec_t& screenNormal, float& horizonOffset, float& horizonRadius)
+   {
+      vec_t cameraToModel = position - eye;
+      float cameraToModelLength = cameraToModel.Length();
+      vec_t cameraToModelNormalized = cameraToModel.Normalize();
+
+      float horizonAngle = acosf(sphereRadius / cameraToModelLength);
+      horizonOffset = sphereRadius * cosf(horizonAngle);
+      horizonRadius = sphereRadius * sinf(horizonAngle);
+
+      screenNormal = -cameraToModelNormalized;
+      screenPlanePos = position + (screenNormal * horizonOffset);
    }
 
    static bool IsInContextRect(ImVec2 p)
@@ -1211,15 +1227,15 @@ namespace IMGUIZMO_NAMESPACE
       }
    }
 
-   static float ComputeAngleOnPlan()
+   static float ComputeAngleOnPlan(const vec_t vectorSource, const vec_t planeOrigin, const vec_t plane)
    {
-      const float len = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, gContext.mTranslationPlan);
-      vec_t localPos = Normalized(gContext.mRayOrigin + gContext.mRayVector * len - gContext.mModel.v.position);
+      const float len = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, plane);
+      vec_t localPos = Normalized(gContext.mRayOrigin + gContext.mRayVector * len - planeOrigin);
 
       vec_t perpendicularVector;
-      perpendicularVector.Cross(gContext.mRotationVectorSource, gContext.mTranslationPlan);
+      perpendicularVector.Cross(vectorSource, plane);
       perpendicularVector.Normalize();
-      float acosAngle = Clamp(Dot(localPos, gContext.mRotationVectorSource), -1.f, 1.f);
+      float acosAngle = Clamp(Dot(localPos, vectorSource), -1.f, 1.f);
       float angle = acosf(acosAngle);
       angle *= (Dot(localPos, perpendicularVector) < 0.f) ? 1.f : -1.f;
       return angle;
@@ -1238,6 +1254,7 @@ namespace IMGUIZMO_NAMESPACE
       ComputeColors(colors, type, ROTATE);
 
       vec_t cameraToModelNormalized;
+      float cameraToModelLength;
       if (gContext.mIsOrthographic)
       {
          matrix_t viewInverse;
@@ -1246,7 +1263,9 @@ namespace IMGUIZMO_NAMESPACE
       }
       else
       {
-         cameraToModelNormalized = Normalized(gContext.mModel.v.position - gContext.mCameraEye);
+         vec_t cameraToModel = gContext.mModel.v.position - gContext.mCameraEye;
+         cameraToModelLength = cameraToModel.Length();
+         cameraToModelNormalized = cameraToModel.Normalize();
       }
 
       cameraToModelNormalized.TransformVector(gContext.mModelInverse);
@@ -1263,6 +1282,8 @@ namespace IMGUIZMO_NAMESPACE
          const bool usingAxis = (gContext.mbUsing && type == MT_ROTATE_Z - axis);
          const int circleMul = (hasRSC && !usingAxis ) ? 1 : 2;
 
+         float circleRadius = rotationDisplayFactor * gContext.mScreenFactor;
+
          ImVec2* circlePos = (ImVec2*)alloca(sizeof(ImVec2) * (circleMul * halfCircleSegmentCount + 1));
 
          float angleStart = atan2f(cameraToModelNormalized[(4 - axis) % 3], cameraToModelNormalized[(3 - axis) % 3]) + ZPI * 0.5f;
@@ -1270,22 +1291,72 @@ namespace IMGUIZMO_NAMESPACE
          for (int i = 0; i < circleMul * halfCircleSegmentCount + 1; i++)
          {
             float ng = angleStart + (float)circleMul * ZPI * ((float)i / (float)(circleMul * halfCircleSegmentCount));
-            vec_t axisPos = makeVect(cosf(ng), sinf(ng), 0.f);
-            vec_t pos = makeVect(axisPos[axis], axisPos[(axis + 1) % 3], axisPos[(axis + 2) % 3]) * gContext.mScreenFactor * rotationDisplayFactor;
+            vec_t axisPos = makeVect(circleRadius * cosf(ng), circleRadius * sinf(ng), 0.f);
+            vec_t pos = makeVect(axisPos[axis], axisPos[(axis + 1) % 3], axisPos[(axis + 2) % 3]);
             circlePos[i] = worldToPos(pos, gContext.mMVP);
          }
+
          if (!gContext.mbUsing || usingAxis)
          {
-            drawList->AddPolyline(circlePos, circleMul* halfCircleSegmentCount + 1, colors[3 - axis], false, gContext.mStyle.RotationLineThickness);
+            drawList->AddPolyline(circlePos, halfCircleSegmentCount + 1, colors[3 - axis], false, gContext.mStyle.RotationLineThickness);
+            if (circleMul > 1)
+            {
+               ImVec4 axisColor = ImColor(colors[3 - axis]);
+               float dimFactor = 0.65f;
+               ImU32 backColor = ImColor(axisColor.x * dimFactor, axisColor.y * dimFactor, axisColor.z * dimFactor, axisColor.w);
+               drawList->AddPolyline(circlePos + halfCircleSegmentCount, halfCircleSegmentCount + 1, backColor, false, gContext.mStyle.RotationLineThickness);
+            }
          }
 
-         float radiusAxis = sqrtf((ImLengthSqr(worldToPos(gContext.mModel.v.position, gContext.mViewProjection) - circlePos[0])));
-         if (radiusAxis > gContext.mRadiusSquareCenter)
+         if (!gContext.mIsOrthographic && gContext.mStyle.PerspectiveCorrectRotationGizmo)
          {
-            gContext.mRadiusSquareCenter = radiusAxis;
+            vec_t modelViewPos = gContext.mModel.v.position;
+            modelViewPos.TransformPoint(gContext.mViewMat);
+
+            vec_t alignViewUp = makeVect(0.f, 1.f, 0.f);
+            vec_t alignViewDir = (makeVect(0.f, 0.f, 0.f) - modelViewPos).Normalize();
+            vec_t alignViewLeft = Cross(alignViewDir, alignViewUp).Normalize();
+            alignViewUp = Cross(modelViewPos + alignViewDir, alignViewLeft).Normalize();
+            matrix_t alignRotate;
+            alignRotate.SetToIdentity();
+            alignRotate.v.up = alignViewUp;
+            alignRotate.v.right = alignViewLeft;
+            alignRotate.v.dir = alignViewDir;
+
+            float horizonOffset;
+            float horizonRadius;
+            vec_t screenNormal;
+            vec_t screenPlanePos;
+            CalculateSphereHorizon(gContext.mModel.v.position, gContext.mCameraEye, circleRadius, screenPlanePos, screenNormal, horizonOffset, horizonRadius);
+
+            ImVec2* rscPos = (ImVec2*)alloca(sizeof(ImVec2) * (2 * halfCircleSegmentCount + 1));
+
+            float rscAngleStart = 0;
+            for (int i = 0; i < 2 * halfCircleSegmentCount + 1; i++)
+            {
+               float ng = rscAngleStart + (float)2 * ZPI * ((float)i / (float)(2 * halfCircleSegmentCount));
+               vec_t axisPos = makeVect(horizonRadius * cosf(ng), horizonRadius * sinf(ng), 0.f);
+               axisPos.z += horizonOffset;
+               axisPos.TransformVector(alignRotate);
+               vec_t pos = axisPos;
+               pos = makeVect(pos.x + modelViewPos.x, pos.y + modelViewPos.y, pos.z + modelViewPos.z, 0.f);
+               rscPos[i] = worldToPos(pos, gContext.mProjectionMat);
+            }
+            if (!gContext.mbUsing || usingAxis)
+            {
+               drawList->AddPolyline(rscPos, 2 * halfCircleSegmentCount + 1, colors[0], false, gContext.mStyle.RotationOuterLineThickness);
+            }
+         }
+         else
+         {
+            float radiusAxis = sqrtf((ImLengthSqr(worldToPos(gContext.mModel.v.position, gContext.mViewProjection) - circlePos[0])));
+            if (radiusAxis > gContext.mRadiusSquareCenter)
+            {
+               gContext.mRadiusSquareCenter = radiusAxis;
+            }
          }
       }
-      if(hasRSC && (!gContext.mbUsing || type == MT_ROTATE_SCREEN))
+      if(hasRSC && (!gContext.mbUsing || type == MT_ROTATE_SCREEN) && (gContext.mIsOrthographic || !gContext.mStyle.PerspectiveCorrectRotationGizmo))
       {
          drawList->AddCircle(worldToPos(gContext.mModel.v.position, gContext.mViewProjection), gContext.mRadiusSquareCenter, colors[0], 64, gContext.mStyle.RotationOuterLineThickness);
       }
@@ -1294,7 +1365,7 @@ namespace IMGUIZMO_NAMESPACE
       {
          ImVec2 circlePos[halfCircleSegmentCount + 1];
 
-         circlePos[0] = worldToPos(gContext.mModel.v.position, gContext.mViewProjection);
+         circlePos[0] = worldToPos(gContext.mTranslationPlanOrigin, gContext.mViewProjection);
          for (unsigned int i = 1; i < halfCircleSegmentCount + 1; i++)
          {
             float ng = gContext.mRotationAngle * ((float)(i - 1) / (float)(halfCircleSegmentCount - 1));
@@ -1303,7 +1374,7 @@ namespace IMGUIZMO_NAMESPACE
             vec_t pos;
             pos.TransformPoint(gContext.mRotationVectorSource, rotateVectorMatrix);
             pos *= gContext.mScreenFactor * rotationDisplayFactor;
-            circlePos[i] = worldToPos(pos + gContext.mModel.v.position, gContext.mViewProjection);
+            circlePos[i] = worldToPos(pos + gContext.mTranslationPlanOrigin, gContext.mViewProjection);
          }
          drawList->AddConvexPolyFilled(circlePos, halfCircleSegmentCount + 1, GetColorU32(ROTATION_USING_FILL));
          drawList->AddPolyline(circlePos, halfCircleSegmentCount + 1, GetColorU32(ROTATION_USING_BORDER), true, gContext.mStyle.RotationLineThickness);
@@ -1968,17 +2039,48 @@ namespace IMGUIZMO_NAMESPACE
       ImGuiIO& io = ImGui::GetIO();
       int type = MT_NONE;
 
-      vec_t deltaScreen = { io.MousePos.x - gContext.mScreenSquareCenter.x, io.MousePos.y - gContext.mScreenSquareCenter.y, 0.f, 0.f };
-      float dist = deltaScreen.Length();
-      if (Intersects(op, ROTATE_SCREEN) && dist >= (gContext.mRadiusSquareCenter - 4.0f) && dist < (gContext.mRadiusSquareCenter + 4.0f))
+      vec_t modelViewPos;
+      modelViewPos.TransformPoint(gContext.mModel.v.position, gContext.mViewMat);
+
+      if (Intersects(op, ROTATE_SCREEN))
       {
-         type = MT_ROTATE_SCREEN;
+         if (gContext.mIsOrthographic || !gContext.mStyle.PerspectiveCorrectRotationGizmo)
+         {
+            vec_t deltaScreen = {io.MousePos.x - gContext.mScreenSquareCenter.x, io.MousePos.y - gContext.mScreenSquareCenter.y, 0.f, 0.f};
+            float dist = deltaScreen.Length();
+            if (dist >= (gContext.mRadiusSquareCenter - 4.0f) && dist < (gContext.mRadiusSquareCenter + 4.0f))
+            {
+               type = MT_ROTATE_SCREEN;
+            }
+         }
+         else
+         {
+            float circleRadius = rotationDisplayFactor * gContext.mScreenFactor;
+            float horizonOffset;
+            float horizonRadius;
+            vec_t screenNormal;
+            vec_t screenPlanePos;
+            CalculateSphereHorizon(gContext.mModel.v.position, gContext.mCameraEye, circleRadius, screenPlanePos, screenNormal, horizonOffset, horizonRadius);
+            vec_t screenPlane = BuildPlan(screenPlanePos, screenNormal);
+
+            const float len = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, screenPlane);
+            const vec_t intersectWorldPos = gContext.mRayOrigin + gContext.mRayVector * len;
+            vec_t centerToIntersect = intersectWorldPos - screenPlanePos;
+            vec_t centerToEdge = (centerToIntersect * (horizonRadius / centerToIntersect.Length()));
+            vec_t closestCirclePoint = screenPlanePos + centerToEdge;
+
+            const ImVec2 closestCirclePointScreen = worldToPos(closestCirclePoint, gContext.mViewProjection);
+            //gContext.mDrawList->AddCircle(closestCirclePointScreen, 5.f, IM_COL32(255, 255, 0, 255));
+            const ImVec2 distanceOnScreen = closestCirclePointScreen - io.MousePos;
+            const float distance = makeVect(distanceOnScreen).Length();
+            if (distance < 8.f) // pixel size
+            {
+               type = MT_ROTATE_SCREEN;
+            }
+         }
       }
 
       const vec_t planNormals[] = { gContext.mModel.v.right, gContext.mModel.v.up, gContext.mModel.v.dir };
-
-      vec_t modelViewPos;
-      modelViewPos.TransformPoint(gContext.mModel.v.position, gContext.mViewMat);
 
       for (int i = 0; i < 3 && type == MT_NONE; i++)
       {
@@ -2349,21 +2451,40 @@ namespace IMGUIZMO_NAMESPACE
             gContext.mbUsing = true;
             gContext.mEditingID = gContext.mActualID;
             gContext.mCurrentOperation = type;
+
             const vec_t rotatePlanNormal[] = { gContext.mModel.v.right, gContext.mModel.v.up, gContext.mModel.v.dir, -gContext.mCameraDir };
-            // pickup plan
-            if (applyRotationLocaly)
+
+            gContext.mTranslationPlanOrigin = gContext.mModel.v.position;
+
+            if (type == MT_ROTATE_SCREEN && !gContext.mIsOrthographic && gContext.mStyle.PerspectiveCorrectRotationGizmo)
             {
-               gContext.mTranslationPlan = BuildPlan(gContext.mModel.v.position, rotatePlanNormal[type - MT_ROTATE_X]);
+               float circleRadius = rotationDisplayFactor * gContext.mScreenFactor;
+               float horizonOffset;
+               float horizonRadius;
+               vec_t screenNormal;
+               vec_t screenPlanePos;
+               CalculateSphereHorizon(gContext.mModel.v.position, gContext.mCameraEye, circleRadius, screenPlanePos, screenNormal, horizonOffset, horizonRadius);
+               vec_t screenPlane = BuildPlan(screenPlanePos, screenNormal);
+               gContext.mTranslationPlanOrigin = screenPlanePos;
+               gContext.mTranslationPlan = screenPlane;
             }
             else
             {
-               gContext.mTranslationPlan = BuildPlan(gContext.mModelSource.v.position, directionUnary[type - MT_ROTATE_X]);
+               // pickup plan
+               if (applyRotationLocaly)
+               {
+                  gContext.mTranslationPlan = BuildPlan(gContext.mModel.v.position, rotatePlanNormal[type - MT_ROTATE_X]);
+               }
+               else
+               {
+                  gContext.mTranslationPlan = BuildPlan(gContext.mModelSource.v.position, directionUnary[type - MT_ROTATE_X]);
+               }
             }
 
             const float len = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, gContext.mTranslationPlan);
-            vec_t localPos = gContext.mRayOrigin + gContext.mRayVector * len - gContext.mModel.v.position;
+            vec_t localPos = gContext.mRayOrigin + gContext.mRayVector * len - gContext.mTranslationPlanOrigin;
             gContext.mRotationVectorSource = Normalized(localPos);
-            gContext.mRotationAngleOrigin = ComputeAngleOnPlan();
+            gContext.mRotationAngleOrigin = ComputeAngleOnPlan(gContext.mRotationVectorSource, gContext.mTranslationPlanOrigin, gContext.mTranslationPlan);
          }
       }
 
@@ -2375,7 +2496,7 @@ namespace IMGUIZMO_NAMESPACE
 #else
          ImGui::CaptureMouseFromApp();
 #endif
-         gContext.mRotationAngle = ComputeAngleOnPlan();
+         gContext.mRotationAngle = ComputeAngleOnPlan(gContext.mRotationVectorSource, gContext.mTranslationPlanOrigin, gContext.mTranslationPlan);
          if (snap)
          {
             float snapInRadian = snap[0] * DEG2RAD;
@@ -2937,7 +3058,7 @@ namespace IMGUIZMO_NAMESPACE
                interpolationUp = referenceUp;
             }
             interpolationFrames = 40;
-            
+
          }
          isClicking = false;
          isDraging = false;

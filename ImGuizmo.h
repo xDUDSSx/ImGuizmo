@@ -248,6 +248,8 @@ namespace IMGUIZMO_NAMESPACE
    {
       IMGUI_API Style();
 
+      bool PerspectiveCorrectRotationGizmo;
+
       float TranslationLineThickness;   // Thickness of lines for translation gizmo
       float TranslationLineArrowSize;   // Size of arrow at the end of lines for translation gizmo
       float RotationLineThickness;      // Thickness of lines for rotation gizmo
