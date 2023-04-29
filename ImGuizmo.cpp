@@ -670,7 +670,8 @@ namespace IMGUIZMO_NAMESPACE
    Style::Style()
    {
       // default values
-      PerspectiveCorrectRotationGizmo = true;
+      CircleSegmentCount = 64;
+	  PerspectiveCorrectRotationGizmo = true;
 
       TranslationLineThickness   = 3.0f;
       TranslationLineArrowSize   = 6.0f;
@@ -820,7 +821,6 @@ namespace IMGUIZMO_NAMESPACE
    static const float quadMin = 0.5f;
    static const float quadMax = 0.8f;
    static const float quadUV[8] = { quadMin, quadMin, quadMin, quadMax, quadMax, quadMax, quadMax, quadMin };
-   static const int halfCircleSegmentCount = 64;
    static const float snapTension = 0.5f;
 
    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1323,6 +1323,8 @@ namespace IMGUIZMO_NAMESPACE
 
       gContext.mRadiusSquareCenter = screenRotateSize * gContext.mHeight;
 
+      int halfCircleSegmentCount = gContext.mStyle.CircleSegmentCount / 2;
+
       bool hasRSC = Intersects(op, ROTATE_SCREEN);
       for (int axis = 0; axis < 3; axis++)
       {
@@ -1359,7 +1361,7 @@ namespace IMGUIZMO_NAMESPACE
             }
          }
 
-         if (!gContext.mIsOrthographic && gContext.mStyle.PerspectiveCorrectRotationGizmo)
+         if (hasRSC && !gContext.mIsOrthographic && gContext.mStyle.PerspectiveCorrectRotationGizmo)
          {
             vec_t modelViewPos = gContext.mModel.v.position;
             modelViewPos.TransformPoint(gContext.mViewMat);
@@ -1409,12 +1411,12 @@ namespace IMGUIZMO_NAMESPACE
       }
       if(hasRSC && (!gContext.mbUsing || type == MT_ROTATE_SCREEN) && (gContext.mIsOrthographic || !gContext.mStyle.PerspectiveCorrectRotationGizmo))
       {
-         drawList->AddCircle(worldToPos(gContext.mModel.v.position, gContext.mViewProjection), gContext.mRadiusSquareCenter, colors[0], 64, gContext.mStyle.RotationOuterLineThickness);
+         drawList->AddCircle(worldToPos(gContext.mModel.v.position, gContext.mViewProjection), gContext.mRadiusSquareCenter, colors[0], halfCircleSegmentCount * 2, gContext.mStyle.RotationOuterLineThickness);
       }
 
       if (gContext.mbUsing && (gContext.mActualID == -1 || gContext.mActualID == gContext.mEditingID) && IsRotateType(type))
       {
-         ImVec2 circlePos[halfCircleSegmentCount + 1];
+         ImVec2* circlePos = (ImVec2*)alloca(sizeof(ImVec2) * (halfCircleSegmentCount + 1));
 
          circlePos[0] = worldToPos(gContext.mTranslationPlanOrigin, gContext.mViewProjection);
          for (unsigned int i = 1; i < halfCircleSegmentCount + 1; i++)
