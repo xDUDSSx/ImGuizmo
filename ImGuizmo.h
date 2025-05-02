@@ -279,6 +279,7 @@ namespace IMGUIZMO_NAMESPACE
       float CenterCircleSize;           // Size of circle at the center of the translate/scale gizmo
 
       float ProjectionHandleRadius;     // Size of the projection manipulator handles
+      float ViewAxesCirleRadiusFontFactor; // Multipler of the imgui font size determining the radius of view axis circles.
 
       ImVec4 Colors[COLOR::COUNT];
    };

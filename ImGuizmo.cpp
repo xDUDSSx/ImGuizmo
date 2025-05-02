@@ -683,6 +683,7 @@ namespace IMGUIZMO_NAMESPACE
       CenterCircleSize           = 6.0f;
 
       ProjectionHandleRadius     = 8.0f;
+      ViewAxesCirleRadiusFontFactor = 0.55f;
 
       // initialize default colors
       Colors[DIRECTION_X]           = ImVec4(0.666f, 0.000f, 0.000f, 1.000f);
@@ -3169,8 +3170,6 @@ namespace IMGUIZMO_NAMESPACE
    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
    // view axes
 
-
-
    void ViewAxes(float* view, const float* projection, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor)
    {
       ImDrawList* drawList = gContext.mDrawList;
@@ -3229,11 +3228,6 @@ namespace IMGUIZMO_NAMESPACE
 
       const matrix_t res = cubeView * cubeProjection;
 
-      float const circleRadius = 0.55f * ImGui::GetFontSize();
-      float const smallerCircleRadius = circleRadius * 0.78f;
-      //ImColor textColor = IM_COL32(0xFF, 0xFF, 0xFF, 0xFF);
-      ImColor textColor = IM_COL32(10, 10, 10, 0xFF);
-
       vec_t origin = makeVect(0, 0, 0);
       ImVec2 originScreen = worldToPos(origin, res, position, size);
       // drawList->AddCircleFilled(originScreen, 5.f, IM_COL32(0xFF, 0, 0, 0xFF));
@@ -3243,9 +3237,6 @@ namespace IMGUIZMO_NAMESPACE
       static const vec_t axisVectors[axisCount] = {
           makeVect(1, 0, 0), makeVect(0, 1, 0), makeVect(0, 0, 1),
           makeVect(-1, 0, 0), makeVect(0, -1, 0), makeVect(0, 0, -1)
-      };
-      static const vec_t axisColors[axisCount / 2] = {
-          makeVect(0.969, 0.004, 0.141, 1.f), makeVect(0.529, 0.941, 0.055, 1.f), makeVect(0, 0.573, 1, 1.f)
       };
 
       struct Point
@@ -3278,33 +3269,34 @@ namespace IMGUIZMO_NAMESPACE
          return -1;
       });
 
+      float const circleRadius = gContext.mStyle.ViewAxesCirleRadiusFontFactor * ImGui::GetFontSize();
+      float const smallerCircleRadius = circleRadius * 0.78f;
+      ImColor textColor = ImGui::GetColorU32(ImGuiCol_Text);
       for (int j = 0; j < axisCount; j++)
       {
          int i = sortArray[j].i; // Reordering based on z
-
-         float valueFactor = (j >= 3 ? 1.0f : 0.74f);
-
-         vec_t color = axisColors[i % 3];
-         vec_t colorHSV;
+         ImVec4 color = gContext.mStyle.Colors[DIRECTION_X + i % 3];
+         ImVec4 colorHSV;
          ImGui::ColorConvertRGBtoHSV(color.x, color.y, color.z, colorHSV.x, colorHSV.y, colorHSV.z);
+         colorHSV.z = (j > 2 ? 1.0f : 0.67f);
          colorHSV.z *= 0.9f;
-         colorHSV.z *= valueFactor;
-         if (i >= 2) {
+         if (i > 2 && j <= 2) {
             colorHSV.y *= 0.9f;
+            color.w *= 0.6f;
          }
          ImGui::ColorConvertHSVtoRGB(colorHSV.x, colorHSV.y, colorHSV.z, color.x, color.y, color.z);
-         ImColor imColor = ImColor(color.x, color.y, color.z, color.w);
+         ImU32 color32 = ImGui::ColorConvertFloat4ToU32(color);
 
          if (i <= 2) {
-            drawList->AddLine(originScreen, axisEndsScreen[i], imColor, thickness);
-            drawList->AddCircleFilled(axisEndsScreen[i], circleRadius, imColor);
+            drawList->AddLine(originScreen, axisEndsScreen[i], color32, thickness);
+            drawList->AddCircleFilled(axisEndsScreen[i], circleRadius, color32);
             ImVec2 textSize = ImGui::CalcTextSize(axisLabels[i]);
             ImVec2 textPos = axisEndsScreen[i] - textSize * 0.5f;
             textPos.x += 0.5f;
             drawList->AddText(textPos, textColor, axisLabels[i]);
             //drawList->AddRect(axisEndsScreen[i] - textSize * 0.5f, axisEndsScreen[i] + textSize * 0.5f, IM_COL32_BLACK);
          } else {
-            drawList->AddCircleFilled(axisEndsScreen[i], smallerCircleRadius, imColor);
+            drawList->AddCircleFilled(axisEndsScreen[i], smallerCircleRadius, color32);
          }
       }
    }
