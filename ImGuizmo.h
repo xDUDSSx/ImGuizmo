@@ -278,7 +278,7 @@ namespace IMGUIZMO_NAMESPACE
       float HatchedAxisLineThickness;   // Thickness of hatched axis lines
       float CenterCircleSize;           // Size of circle at the center of the translate/scale gizmo
 
-      float ProjectionCircleRadius;     // Size of the projection manipulator handles
+      float ProjectionHandleRadius;     // Size of the projection manipulator handles
 
       ImVec4 Colors[COLOR::COUNT];
    };

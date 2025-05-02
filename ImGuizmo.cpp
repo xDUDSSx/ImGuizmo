@@ -671,7 +671,7 @@ namespace IMGUIZMO_NAMESPACE
    {
       // default values
       CircleSegmentCount = 64;
-	  PerspectiveCorrectRotationGizmo = true;
+      PerspectiveCorrectRotationGizmo = true;
 
       TranslationLineThickness   = 3.0f;
       TranslationLineArrowSize   = 6.0f;
@@ -682,7 +682,7 @@ namespace IMGUIZMO_NAMESPACE
       HatchedAxisLineThickness   = 6.0f;
       CenterCircleSize           = 6.0f;
 
-      ProjectionCircleRadius     = 5.0f;
+      ProjectionHandleRadius     = 8.0f;
 
       // initialize default colors
       Colors[DIRECTION_X]           = ImVec4(0.666f, 0.000f, 0.000f, 1.000f);
@@ -3577,12 +3577,11 @@ namespace IMGUIZMO_NAMESPACE
          ImU32 selectionColor = GetColorU32(SELECTION);
          bool overAnchor = type == (int)(MT_PROJECTION_LEFT + i);
 
-         static const float AnchorRadius = 8.f;
          unsigned int anchorAlpha = gContext.mbEnable ? IM_COL32_BLACK : IM_COL32(0, 0, 0, 0x80);
          int c = 200;
          unsigned int anchorColor = overAnchor ? selectionColor : (IM_COL32((i >= 0 && i < 2 ? c : 0), (i >= 2 && i < 4 ? c : 0), (i >= 4 && i < 6 ? c : 0), 0) + anchorAlpha);
-         drawList->AddCircleFilled(handleScreenPos, AnchorRadius, IM_COL32_BLACK);
-         drawList->AddCircleFilled(handleScreenPos, AnchorRadius - 1.2f, anchorColor);
+         drawList->AddCircleFilled(handleScreenPos, gContext.mStyle.ProjectionHandleRadius, IM_COL32_BLACK);
+         drawList->AddCircleFilled(handleScreenPos, gContext.mStyle.ProjectionHandleRadius * 0.85f, anchorColor);
       }
    }
 
