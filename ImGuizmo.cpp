@@ -3170,7 +3170,7 @@ namespace IMGUIZMO_NAMESPACE
    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
    // view axes
 
-   void ViewAxes(float* view, const float* projection, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor)
+   void ViewAxes(float* view, const float* projection, float length, ImVec2 position, ImVec2 size, float* axisFactors, ImU32 backgroundColor)
    {
       ImDrawList* drawList = gContext.mDrawList;
 
@@ -3234,9 +3234,13 @@ namespace IMGUIZMO_NAMESPACE
 
       constexpr int axisCount = 6;
       static const char* axisLabels[axisCount] = {"X", "Y", "Z", "-X", "-Y", "-Z"};
-      static const vec_t axisVectors[axisCount] = {
-          makeVect(1, 0, 0), makeVect(0, 1, 0), makeVect(0, 0, 1),
-          makeVect(-1, 0, 0), makeVect(0, -1, 0), makeVect(0, 0, -1)
+
+      static float defaultFactors[3] = {1.f, 1.f, 1.f};
+      if (axisFactors == nullptr)
+         axisFactors = defaultFactors;
+      const vec_t axisVectors[axisCount] = {
+          makeVect(1, 0, 0) * axisFactors[0], makeVect(0, 1, 0) * axisFactors[1], makeVect(0, 0, 1) * axisFactors[2],
+          makeVect(-1, 0, 0) * axisFactors[0], makeVect(0, -1, 0) * axisFactors[1], makeVect(0, 0, -1) * axisFactors[2]
       };
 
       struct Point
